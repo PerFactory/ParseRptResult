@@ -23,9 +23,8 @@ if(!yargv.input){
 	return;
 }
 
-const test_detail_key = "userId=default";
-const transaction_key = "counter=/Transactions/Attempts/%5BTRANSACTION%5D/Cumulated/Count&counter=/Transactions/Net%20Server%20Time/%5BTRANSACTION%5D/Cumulated/Mean&counter=/Transactions/Net%20Server%20Time/%5BTRANSACTION%5D/Cumulated/Min&counter=/Transactions/Net%20Server%20Time/%5BTRANSACTION%5D/Cumulated/Max&counter=/Transactions/Net%20Server%20Time/%5BTRANSACTION%5D/Cumulated/Percentile/75&counter=/Transactions/Net%20Server%20Time/%5BTRANSACTION%5D/Cumulated/Percentile/90";
-const page_key = "counter=/Pages/Attempts/%5BPAGE%5D/Element/%5BELEMENT%5D/Cumulated/Count&counter=/Pages/Hits/%5BPAGE%5D/Element/%5BELEMENT%5D/Cumulated/Count&counter=/Pages/Response%20Time/%5BPAGE%5D/Element/%5BELEMENT%5D/Cumulated/Mean&counter=/Pages/Response%20Time/%5BPAGE%5D/Element/%5BELEMENT%5D/Cumulated/Min&counter=/Pages/Response%20Time/%5BPAGE%5D/Element/%5BELEMENT%5D/Cumulated/Max&counter=/Pages/Response%20Time/%5BPAGE%5D/Element/%5BELEMENT%5D/Cumulated/Percentile/75&counter=/Pages/Response%20Time/%5BPAGE%5D/Element/%5BELEMENT%5D/Cumulated/Percentile/90";
+// read & init configuration from JSON file
+const config = JSON.parse(fs.readFileSync('config.json', 'utf8'));
 
 console.log('Reading data from ' + yargv.input);
 
@@ -35,19 +34,18 @@ const requests_map_raw = fs.readFileSync(req_map_path, 'utf8');
 const requests_map = JSON.parse(requests_map_raw.substring(49, requests_map_raw.length - 3));
 
 // find the request js file from request_map (both header and data)
-let lst_transaction_details = [];
 let tran_file;
 let page_file;
 let test_detail_file;
 
 Object.keys(requests_map).forEach( (k) => {
-		if(k.indexOf(transaction_key) > 0){
+		if(k.indexOf(config.transaction_key) > 0){
 			tran_file = yargv.input + '/datas/' + requests_map[k] + '.js';
 		}
-		if(k.indexOf(page_key) > 0){
+		if(k.indexOf(config.page_key) > 0){
 			page_file = yargv.input + '/datas/' + requests_map[k] + '.js';
 		}
-		if(k.indexOf(test_detail_key) > 0){
+		if(k.indexOf(config.test_detail_key) > 0){
 			test_detail_file = yargv.input + '/datas/' + requests_map[k] + '.js';
 		}
 	});
@@ -62,12 +60,12 @@ const tran_data_raw = fs.readFileSync(tran_file, 'utf8');
 const tran_data = JSON.parse(tran_data_raw.substring(tran_data_raw.indexOf('return ') + 7, tran_data_raw.length - 3));
 
 for ( let obj of tran_data.groups[0].instances ) {
-	tran_arr.push({"col_0":obj.name, "Col_1":checkValue(obj.counters[0]), 
-		"col_2":convertToSecond(obj.counters[1]), 
-		"col_3":convertToSecond(obj.counters[2]), 
-		"col_4":convertToSecond(obj.counters[3]), 
-		"Col_5":convertToSecond(obj.counters[4]), 
-		"col_6":convertToSecond(obj.counters[5])
+	tran_arr.push({"col_0":obj.name, "Col_1": {"value":checkValue(obj.counters[0]), "highlight": false}, 
+		"col_2":hightlightTran(config.transaction_sla, obj.name, obj.counters[1]), 
+		"col_3":hightlightTran(config.transaction_sla, obj.name, obj.counters[2]), 
+		"col_4":hightlightTran(config.transaction_sla, obj.name, obj.counters[3]), 
+		"Col_5":hightlightTran(config.transaction_sla, obj.name, obj.counters[4]), 
+		"col_6":hightlightTran(config.transaction_sla, obj.name, obj.counters[5])
 	});
 }
 
@@ -152,6 +150,37 @@ const cell_style= wb.createStyle({
 	}
 });
 
+const highlight_cell_style= wb.createStyle({
+	font: {
+		bold: false,
+		color: '#9c0006',
+		size: 11
+	},
+	border: {
+		left: {
+			style:'thin',
+			color: '#000000'
+		},
+		right: {
+			style:'thin',
+			color: '#000000'
+		},
+		top: {
+			style:'thin',
+			color: '#000000'
+		},
+		bottom: {
+			style:'thin',
+			color: '#000000'
+		},
+	},
+	fill: {
+		type: 'pattern',
+		patternType: 'solid',
+		fgColor: '#ffc7ce'
+	}
+});
+
 // add test details sheet
 let details = getTestDetails(test_detail_file);
 const testName = details.testName;
@@ -183,8 +212,12 @@ for(let tran of transactions){
 		}else{
 			if (col == 1)
 				tran_ws.cell(row, col).string(tran[k]).style(cell_style);
-			else
-				tran_ws.cell(row, col).number(tran[k]).style(cell_style);
+			else{
+				if(tran[k].highlight)
+					tran_ws.cell(row, col).number(tran[k].value).style(highlight_cell_style);
+				else
+					tran_ws.cell(row, col).number(tran[k].value).style(cell_style);
+			}
 		}
 		col ++;
 	});
@@ -226,7 +259,7 @@ page_ws.column(5).hide();
 page_ws.column(6).hide();
 
 // determine output path and flush the excel file
-outputFile = yargv.output + '/' + 'result_' + new Date(details.startTime).toISOString().replace(/:/g, '_') + '.xlsx';
+outputFile = yargv.output + '/' + 'result_' + new Date(details.startTime).toISOString().replace(/:/g, '_') + '_temp.xlsx';
 wb.write(outputFile, (err, stat) => { if (err) { console.error(err); } else{ console.log('Saved to ' + outputFile); } });
 
 function CreateWorkbook(){
@@ -243,7 +276,7 @@ function CreateWorkbook(){
 			workbookView: {
 				activeTab: 1, // Specifies an unsignedInt that contains the index to the active sheet in this book view.
 				autoFilterDateGrouping: true, // Specifies a boolean value that indicates whether to group dates when presenting the user with filtering options in the user interface.
-				firstSheet: 1, // Specifies the index to the first sheet in this book view.
+				//firstSheet: 1, // Specifies the index to the first sheet in this book view.
 				minimized: false, // Specifies a boolean value that indicates whether the workbook window is minimized.
 				showHorizontalScroll: true, // Specifies a boolean value that indicates whether to display the horizontal scroll bar in the user interface.
 				showSheetTabs: true, // Specifies a boolean value that indicates whether to display the sheet tabs in the user interface.
@@ -284,4 +317,21 @@ function checkValue(val){
 function getTestDetails(path){
 	const raw_data = fs.readFileSync(path, 'utf8');
 	return JSON.parse(raw_data.substring(raw_data.indexOf('return ') + 7, raw_data.length - 3));
+}
+
+function hightlightTran(tranConf, tranName, value){
+	secValue = convertToSecond(value);
+	
+	let sla = tranConf["global"];
+	// find the value for transaction from config
+	if(tranConf[tranName])
+		sla = tranConf[tranName];
+	
+	let highlight = false;
+	// check if value is greater than config value
+	if(secValue > sla)
+		highlight = true;
+	
+	// then return the object
+	return {"value": secValue, "highlight": highlight};
 }
